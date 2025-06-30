@@ -14,6 +14,43 @@ class DataLoader:
     data_shape: tuple
     batch_size: int
 
+    def get_metadata(self):
+        if "csv" in self.metadata:
+            metadata_file = pd.read_csv(self.metadata)
+        else:
+            metadata_file = pd.read_excel(self.metadata)
+
+        return metadata_file
+
+    def get_img_data(self):
+        images_list = []
+        metadata = self.get_metadata()
+        for element in metadata.iterrows():
+            img = element[1]["images"]
+
+            if os.path.exists(f"{self.path}/{img}"):
+                images_list.append(f"{self.path}/{img}")
+
+        return pd.DataFrame({"image": images_list})
+
+    def load_image(self, image_path):
+        image = tf.io.read_file(image_path)
+        image = tf.image.decode_png(image, channels=self.data_shape[2])
+        image = tf.image.convert_image_dtype(image, tf.float32)
+        image = tf.image.resize(image, (self.data_shape[0], self.data_shape[1]))
+
+        return image
+
+    def build_test_img_dataset(self):
+        images_path_df = self.get_img_data()
+        image_paths = images_path_df["image"].to_list()
+
+        test_dataset = tf.data.Dataset.from_tensor_slices(image_paths)
+        test_dataset = test_dataset.map(self.load_image, num_parallel_calls=tf.data.AUTOTUNE)
+        test_dataset = test_dataset.batch(self.batch_size).prefetch(tf.data.AUTOTUNE)
+
+        return test_dataset
+
 
 @dataclass
 class CoCross(DataLoader):
@@ -37,25 +74,18 @@ class CoCross(DataLoader):
 
         return image_map
 
-    def get_metadata(self):
-        return pd.read_excel(self.metadata)
-
     def get_survival_data(self, keep: str = "last"):
         metadata_df = self.get_metadata()
         metadata_df = metadata_df.groupby("ID").last()
         image_map = self.get_imgs_paths(keep)
-        metadata_df["xr path"] = metadata_df.index.map(image_map)
-        metadata_df = metadata_df[["hospitalization days", "xr path"]]
+        metadata_df["images"] = metadata_df.index.map(image_map)
+        metadata_df = metadata_df[["images", "hospitalization days"]]
 
         return metadata_df
 
 
 @dataclass
 class LungSegDataset(DataLoader):
-    def get_metadata(self):
-        metadata = pd.read_csv(self.metadata)
-
-        return metadata
 
     def get_segmentation_data(self):
         images_list = []
