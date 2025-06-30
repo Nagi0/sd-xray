@@ -12,6 +12,11 @@ from keras.layers import (
 import keras.backend as keras_backend
 
 
+def load_model(model_path: str, custom_objects: dict) -> tf.keras.Model | None:
+    model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
+    return model
+
+
 @dataclass
 class Model:
     input_shape: tuple
@@ -113,7 +118,7 @@ class UNet(Model):
         callbacks = [
             checkpointer,
             tf.keras.callbacks.EarlyStopping(patience=100, monitor=metric),
-            tf.keras.callbacks.TensorBoard(log_dir="logs/unet"),
+            tf.keras.callbacks.TensorBoard(log_dir=f"logs/{file_name}"),
         ]
 
         self.model.fit(train_dataset, validation_data=val_dataset, epochs=epochs, callbacks=callbacks)

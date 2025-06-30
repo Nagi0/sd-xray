@@ -23,9 +23,22 @@ if __name__ == "__main__":
             "adam",
             0.25,
             "val_binary_io_u",
-            20,
+            30,
             4,
         )
 
-    elif mode == "validate_segmentation":
-        pass
+    elif mode == "test_segmentation":
+        Tools.test_segmentation(
+            "./model_lung_segmentation.h5",
+            ".",
+            "sdXray/datasets/CoCross/CoCrossDatabaseImage.csv",
+            (256, 256, 1),
+            4,
+        )
+
+    elif mode == "generate_survival_img_metadata":
+        data_loader = CoCross(
+            "sdXray/datasets/CoCross", "sdXray/datasets/CoCross/CoCrossDatabase.xlsx", (256, 256, 1), 1
+        )
+        survival_data = data_loader.get_survival_data()
+        survival_data.to_csv("sdXray/datasets/CoCross/CoCrossDatabaseImage.csv", index=False)
