@@ -1,6 +1,6 @@
 import os
 import tensorflow as tf
-from utils.data_loader import CoCross, LungSegDataset, DataLoader
+from utils.data_loader import DataLoader, LungSegDataset, Covid19Dataset
 from utils.models import UNet, load_model
 import matplotlib.pyplot as plt
 
@@ -9,8 +9,7 @@ class Tools:
 
     @staticmethod
     def train_segmentation(
-        dataset_path: str,
-        metadata_path: str,
+        data_loader: LungSegDataset | Covid19Dataset,
         img_shape: tuple,
         activation: str,
         kernel_init: str,
@@ -19,14 +18,7 @@ class Tools:
         val_size: float,
         val_metric: str,
         epochs: int,
-        batch_size: int,
     ):
-        data_loader = LungSegDataset(
-            dataset_path,
-            metadata_path,
-            img_shape,
-            batch_size,
-        )
         train_dataset, val_dataset = data_loader.build_dataset(val_size)
         print(train_dataset, val_dataset)
 
