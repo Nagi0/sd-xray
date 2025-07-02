@@ -7,6 +7,30 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
 
+def show_samples(dataset, num_samples=4):
+    plt.figure(figsize=(10, num_samples * 4))
+
+    for image, mask in dataset.take(1):
+        images_np = tf.squeeze(image).numpy()
+        masks_np = tf.squeeze(mask).numpy()
+
+        for i, (img, mk) in enumerate(zip(images_np, masks_np)):
+            # Imagem
+            plt.subplot(4, 2, 2 * i + 1)
+            plt.imshow(img, cmap="gray")
+            plt.title("Imagem")
+            plt.axis("off")
+
+            # Máscara
+            plt.subplot(4, 2, 2 * i + 2)
+            plt.imshow(mk, cmap="gray")
+            plt.title("Máscara")
+            plt.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
 @dataclass
 class DataLoader:
     path: str
@@ -40,6 +64,21 @@ class DataLoader:
         image = tf.image.resize(image, (self.data_shape[0], self.data_shape[1]))
 
         return image
+
+    def load_image_and_mask(self, image_path, mask_path):
+        # Lê e decodifica a imagem original
+        image = tf.io.read_file(image_path)
+        image = tf.image.decode_png(image, channels=self.data_shape[2])
+        image = tf.image.convert_image_dtype(image, tf.float32)
+        image = tf.image.resize(image, (self.data_shape[0], self.data_shape[1]))
+
+        # Lê e decodifica a máscara
+        mask = tf.io.read_file(mask_path)
+        mask = tf.image.decode_png(mask, channels=self.data_shape[2])
+        mask = tf.cast(mask > 0, tf.float32)
+        mask = tf.image.resize(mask, (self.data_shape[0], self.data_shape[1]), method="nearest")
+
+        return image, mask
 
     def build_test_img_dataset(self):
         images_path_df = self.get_img_data()
@@ -101,43 +140,43 @@ class LungSegDataset(DataLoader):
 
         return pd.DataFrame({"image": images_list, "mask": masks_list})
 
-    @staticmethod
-    def show_samples(dataset, num_samples=3):
-        plt.figure(figsize=(10, num_samples * 3))
+    def build_dataset(self, test_size: float, show_sample: bool = False):
+        images_path_df = self.get_segmentation_data()
+        image_paths = images_path_df["image"].to_list()
+        mask_paths = images_path_df["mask"].to_list()
 
-        for i, (image, mask) in enumerate(dataset.take(num_samples)):
-            image_np = tf.squeeze(image).numpy()
-            mask_np = tf.squeeze(mask).numpy()
+        train_image_path, val_image_path, train_mask_path, val_mask_path = train_test_split(
+            image_paths, mask_paths, test_size=test_size
+        )
 
-            # Imagem
-            plt.subplot(num_samples, 2, 2 * i + 1)
-            plt.imshow(image_np, cmap="gray")
-            plt.title("Imagem")
-            plt.axis("off")
+        train_dataset = tf.data.Dataset.from_tensor_slices((train_image_path, train_mask_path))
+        train_dataset = train_dataset.map(self.load_image_and_mask, num_parallel_calls=tf.data.AUTOTUNE)
 
-            # Máscara
-            plt.subplot(num_samples, 2, 2 * i + 2)
-            plt.imshow(mask_np, cmap="gray")
-            plt.title("Máscara")
-            plt.axis("off")
+        val_dataset = tf.data.Dataset.from_tensor_slices((val_image_path, val_mask_path))
+        val_dataset = val_dataset.map(self.load_image_and_mask, num_parallel_calls=tf.data.AUTOTUNE)
 
-        plt.tight_layout()
-        plt.show()
+        train_dataset = train_dataset.batch(self.batch_size).prefetch(tf.data.AUTOTUNE)
+        val_dataset = val_dataset.batch(self.batch_size).prefetch(tf.data.AUTOTUNE)
 
-    def load_image_and_mask(self, image_path, mask_path):
-        # Lê e decodifica a imagem original
-        image = tf.io.read_file(image_path)
-        image = tf.image.decode_png(image, channels=self.data_shape[2])
-        image = tf.image.convert_image_dtype(image, tf.float32)
-        image = tf.image.resize(image, (self.data_shape[0], self.data_shape[1]))
+        if show_sample:
+            show_samples(train_dataset)
 
-        # Lê e decodifica a máscara
-        mask = tf.io.read_file(mask_path)
-        mask = tf.image.decode_png(mask, channels=self.data_shape[2])
-        mask = tf.cast(mask > 0, tf.float32)
-        mask = tf.image.resize(mask, (self.data_shape[0], self.data_shape[1]), method="nearest")
+        return train_dataset, val_dataset
 
-        return image, mask
+
+class Covid19Dataset(DataLoader):
+    def get_segmentation_data(self):
+        images = []
+        masks = []
+        for dirpath, _, filenames in os.walk(self.path):
+            dirpath = dirpath.replace("\\", "/")
+            for file in filenames:
+                if "images" in dirpath and file.endswith(".png"):
+                    images.append(f"{dirpath}/{file}")
+                elif "masks" in dirpath and file.endswith(".png"):
+                    masks.append(f"{dirpath}/{file}")
+
+        return pd.DataFrame({"image": images, "mask": masks})
 
     def build_dataset(self, test_size: float, show_sample: bool = False):
         images_path_df = self.get_segmentation_data()
@@ -158,6 +197,6 @@ class LungSegDataset(DataLoader):
         val_dataset = val_dataset.batch(self.batch_size).prefetch(tf.data.AUTOTUNE)
 
         if show_sample:
-            self.show_samples(train_dataset)
+            show_samples(train_dataset)
 
         return train_dataset, val_dataset
