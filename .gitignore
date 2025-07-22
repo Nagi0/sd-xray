@@ -8,11 +8,11 @@ __pycache__/
 *.so
 
 # Data files
-*.csv
 *.wav
 *.png
 *.jpg
 *.dcm
+*.xlsx
 
 # Data extensions
 *.bmp

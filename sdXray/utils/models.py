@@ -12,6 +12,11 @@ from keras.layers import (
 import keras.backend as keras_backend
 
 
+SIGMOID = "sigmoid"
+BINARY_IOU = "BinaryIoU"
+LOGS_PATH = "logs/"
+
+
 def load_model(model_path: str, custom_objects: dict) -> tf.keras.Model | None:
     model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
     return model
@@ -27,22 +32,22 @@ class Model:
     optimizer: str
 
     @staticmethod
-    def dice_coef(y_true, y_pred, smooth=100):
+    def _dice_coef(y_true, y_pred, smooth=100):
         y_true_f = keras_backend.flatten(y_true)
         y_pred_f = keras_backend.flatten(y_pred)
         intersection = keras_backend.sum(y_true_f * y_pred_f)
         dice = (2.0 * intersection + smooth) / (keras_backend.sum(y_true_f) + keras_backend.sum(y_pred_f) + smooth)
         return dice
 
-    def dice_coef_loss(self, y_true, y_pred):
-        return 1 - self.dice_coef(y_true, y_pred)
+    def _dice_coef_loss(self, y_true, y_pred):
+        return 1 - self._dice_coef(y_true, y_pred)
 
-    def get_input_layer(self):
+    def _get_input_layer(self):
         return tf.keras.layers.Input(self.input_shape)
 
-    def get_output_layer(self):
+    def _get_output_layer(self):
         if self.output_shape == self.input_shape:
-            output_layer = Conv2D(1, (1, 1), activation="sigmoid")
+            output_layer = Conv2D(1, (1, 1), activation=SIGMOID)
         else:
             output_layer = Dense(1)
 
@@ -51,7 +56,44 @@ class Model:
 
 @dataclass
 class UNet(Model):
-    def get_encoding(self, input_layer, filters: int, kernel_size: tuple, pool_size: tuple):
+    def build_model(self):
+        input_layer = self._get_input_layer()
+        output_layer = self._get_output_layer()
+
+        encoding1, pool1 = self._get_encoding(input_layer, 16, (3, 3), (2, 2))
+        encoding2, pool2 = self._get_encoding(pool1, 32, (3, 3), (2, 2))
+        encoding3, pool3 = self._get_encoding(pool2, 64, (3, 3), (2, 2))
+        encoding4, pool4 = self._get_encoding(pool3, 128, (3, 3), (2, 2))
+        encoding5, _ = self._get_encoding(pool4, 256, (3, 3), (2, 2))
+
+        decoding1 = self._get_decoding(encoding5, encoding4, 128, (2, 2), (3, 3))
+        decoding2 = self._get_decoding(decoding1, encoding3, 64, (2, 2), (3, 3))
+        decoding3 = self._get_decoding(decoding2, encoding2, 32, (2, 2), (3, 3))
+        decoding4 = self._get_decoding(decoding3, encoding1, 16, (2, 2), (3, 3))
+
+        outputs = output_layer(decoding4)
+
+        self.model = tf.keras.Model(inputs=[input_layer], outputs=[outputs])
+        self.model.compile(
+            optimizer=self.optimizer,
+            loss=self.loss,
+            metrics=[
+                BINARY_IOU,
+                self._dice_coef,
+            ],
+        )
+
+    def fit(self, train_dataset, val_dataset, epochs: int, metric: str, file_name: str):
+        checkpointer = tf.keras.callbacks.ModelCheckpoint(file_name, verbose=1, metric=metric, save_best_only=True)
+        callbacks = [
+            checkpointer,
+            tf.keras.callbacks.EarlyStopping(patience=100, monitor=metric),
+            tf.keras.callbacks.TensorBoard(log_dir=f"{LOGS_PATH}{file_name}"),
+        ]
+
+        self.model.fit(train_dataset, validation_data=val_dataset, epochs=epochs, callbacks=callbacks)
+
+    def _get_encoding(self, input_layer, filters: int, kernel_size: tuple, pool_size: tuple):
         conv_enc = Conv2D(
             filters, kernel_size, activation=self.activation, kernel_initializer=self.kernel_init, padding="same"
         )(input_layer)
@@ -65,7 +107,7 @@ class UNet(Model):
 
         return conv_enc, max_pool
 
-    def get_decoding(
+    def _get_decoding(
         self,
         input_layer,
         concatenate_layer: tf.keras.Sequential,
@@ -88,37 +130,3 @@ class UNet(Model):
         conv_dec = BatchNormalization()(conv_dec)
 
         return conv_dec
-
-    def build_model(self):
-        input_layer = self.get_input_layer()
-        output_layer = self.get_output_layer()
-
-        encoding1, pool1 = self.get_encoding(input_layer, 16, (3, 3), (2, 2))
-        encoding2, pool2 = self.get_encoding(pool1, 32, (3, 3), (2, 2))
-        encoding3, pool3 = self.get_encoding(pool2, 64, (3, 3), (2, 2))
-        encoding4, pool4 = self.get_encoding(pool3, 128, (3, 3), (2, 2))
-        encoding5, _ = self.get_encoding(pool4, 256, (3, 3), (2, 2))
-
-        decoding1 = self.get_decoding(encoding5, encoding4, 128, (2, 2), (3, 3))
-        decoding2 = self.get_decoding(decoding1, encoding3, 64, (2, 2), (3, 3))
-        decoding3 = self.get_decoding(decoding2, encoding2, 32, (2, 2), (3, 3))
-        decoding4 = self.get_decoding(decoding3, encoding1, 16, (2, 2), (3, 3))
-
-        outputs = output_layer(decoding4)
-
-        self.model = tf.keras.Model(inputs=[input_layer], outputs=[outputs])
-        self.model.compile(
-            optimizer=self.optimizer,
-            loss=self.loss,
-            metrics=["BinaryIoU", self.dice_coef, "Accuracy", "Precision", "Recall"],
-        )
-
-    def fit(self, train_dataset, val_dataset, epochs: int, metric: str, file_name: str):
-        checkpointer = tf.keras.callbacks.ModelCheckpoint(file_name, verbose=1, metric=metric, save_best_only=True)
-        callbacks = [
-            checkpointer,
-            tf.keras.callbacks.EarlyStopping(patience=100, monitor=metric),
-            tf.keras.callbacks.TensorBoard(log_dir=f"logs/{file_name}"),
-        ]
-
-        self.model.fit(train_dataset, validation_data=val_dataset, epochs=epochs, callbacks=callbacks)
